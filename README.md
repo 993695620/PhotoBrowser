@@ -70,7 +70,7 @@ JXPhotoBrowser **不追踪用户、不收集任何数据、不使用任何 Requi
 在你的 `Podfile` 中添加：
 
 ```ruby
-pod 'JXPhotoBrowser', '~> 4.0.1'
+pod 'JXPhotoBrowser', '~> 4.0.2'
 ```
 
 > **注意**：Xcode 15 起默认开启了 **User Script Sandboxing**（`ENABLE_USER_SCRIPT_SANDBOXING=YES`），该沙盒机制会阻止 CocoaPods 的 Run Script 阶段（如 `[CP] Copy Pods Resources`、`[CP] Embed Pods Frameworks` 等）访问沙盒外的文件，导致编译失败。需要在编译 Target 的 **Build Settings** 中将 `ENABLE_USER_SCRIPT_SANDBOXING` 设置为 `NO`：
@@ -89,7 +89,7 @@ pod 'JXPhotoBrowser', '~> 4.0.1'
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/JiongXing/PhotoBrowser", from: "4.0.1")
+    .package(url: "https://github.com/JiongXing/PhotoBrowser", from: "4.0.2")
 ]
 ```
 
@@ -540,6 +540,8 @@ func photoBrowser(_ browser: JXPhotoBrowserViewController, willDisplay cell: JXP
 这样可以确保转场动画开始时，Cell 已经有正确尺寸的图片，动画效果更加流畅。
 
 ## 版本更新
+
+**v4.0.2**（2026/02/16）— 优化双击放大体验：以点击位置为锚点放大，优化缩小动画流畅度。
 
 **v4.0.1**（2026/02/10）— 全面重构，回归 `UICollectionView`，支持无限循环滚动，新增 SwiftUI 示例。不兼容 3.x 版本。
 
