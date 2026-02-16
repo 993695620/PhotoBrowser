@@ -239,8 +239,15 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         let currentScale = scrollView.zoomScale
         let isInitialScale = abs(currentScale - scrollView.minimumZoomScale) < 0.01
         
+        // 获取点击位置用于计算放大时的目标偏移
+        let tapInScrollView = gesture.location(in: scrollView)
+        let tapInImageView = gesture.location(in: imageView)
+        
         if isInitialScale {
             // 在初始缩放状态下，切换缩放模式（长边铺满 <-> 短边铺满）
+            // 在 adjustImageViewFrame 之前保存当前偏移量，因为 adjustImageViewFrame 会临时改变
+            // contentSize，UIKit 可能在此过程中钳制 contentOffset
+            let originalOffset = scrollView.contentOffset
             isShortEdgeFit.toggle()
             // 先计算新的 frame
             let oldFrame = imageView.frame
@@ -248,16 +255,50 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
             let newFrame = imageView.frame
             let newContentSize = imageView.frame.size
             
+            // 计算基于点击位置的目标 contentOffset（仅在放大到 aspectFill 时需要）
+            var tapBasedOffset: CGPoint?
+            if isShortEdgeFit, oldFrame.width > 0, oldFrame.height > 0 {
+                // 点击位置在旧图片中的相对比例
+                let scaleRatioX = newFrame.width / oldFrame.width
+                let scaleRatioY = newFrame.height / oldFrame.height
+                // 相同比例位置在新图片中的坐标
+                let newTapInContent = CGPoint(
+                    x: tapInImageView.x * scaleRatioX,
+                    y: tapInImageView.y * scaleRatioY
+                )
+                let containerSize = bounds.size
+                // 目标 offset：使新内容坐标点对齐到屏幕上的点击位置
+                let rawOffsetX = newTapInContent.x - tapInScrollView.x
+                let rawOffsetY = newTapInContent.y - tapInScrollView.y
+                // 限制在有效范围内
+                let maxOffsetX = max(0, newContentSize.width - containerSize.width)
+                let maxOffsetY = max(0, newContentSize.height - containerSize.height)
+                tapBasedOffset = CGPoint(
+                    x: min(max(0, rawOffsetX), maxOffsetX),
+                    y: min(max(0, rawOffsetY), maxOffsetY)
+                )
+            }
+            
             // 恢复旧 frame 用于动画起点
             imageView.frame = oldFrame
             scrollView.contentSize = oldFrame.size
             centerImageIfNeeded()
+            // 缩小时恢复原始 contentOffset 作为动画起点，
+            // 避免 centerImageIfNeeded 或 adjustImageViewFrame 钳制导致的偏移闪跳
+            if !isShortEdgeFit {
+                scrollView.contentOffset = originalOffset
+            }
             
             // 使用动画平滑切换
             UIView.animate(withDuration: 0.3, animations: {
                 self.imageView.frame = newFrame
                 self.scrollView.contentSize = newContentSize
                 self.centerImageIfNeeded()
+                
+                // 在 centerImageIfNeeded 之后，覆盖 contentOffset 以定位到点击位置
+                if let offset = tapBasedOffset {
+                    self.scrollView.contentOffset = offset
+                }
             })
         } else {
             // 在非初始缩放状态下，切换回初始状态（长边铺满模式）
