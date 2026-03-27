@@ -70,7 +70,7 @@ JXPhotoBrowser **does not track users, does not collect any data, and does not u
 Add to your `Podfile`:
 
 ```ruby
-pod 'JXPhotoBrowser', '~> 4.0.2'
+pod 'JXPhotoBrowser', '~> 4.0.3'
 ```
 
 > **Note**: Starting from Xcode 15, **User Script Sandboxing** (`ENABLE_USER_SCRIPT_SANDBOXING=YES`) is enabled by default. This sandbox mechanism prevents CocoaPods' Run Script phases (such as `[CP] Copy Pods Resources`, `[CP] Embed Pods Frameworks`, etc.) from accessing files outside the sandbox, causing build failures. You need to set `ENABLE_USER_SCRIPT_SANDBOXING` to `NO` in your build target's **Build Settings**:
@@ -89,7 +89,7 @@ Or add the dependency in your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/JiongXing/PhotoBrowser", from: "4.0.2")
+    .package(url: "https://github.com/JiongXing/PhotoBrowser", from: "4.0.3")
 ]
 ```
 
@@ -542,6 +542,8 @@ func photoBrowser(_ browser: JXPhotoBrowserViewController, willDisplay cell: JXP
 This ensures the cell has an image with the correct dimensions when the transition animation starts, resulting in a smoother animation.
 
 ## Release Notes
+
+**v4.0.3** (2026/03/27) — Fixed initial image centering, reworked `JXZoomImageCell` layout/centering behavior, and refined drag-to-dismiss and clipping behavior.
 
 **v4.0.2** (2026/02/16) — Improved double-tap zoom: zooms anchored to the tap point, with smoother zoom-out animation.
 
