@@ -24,7 +24,7 @@ JXPhotoBrowser is a lightweight, customizable iOS photo/video browser that deliv
 - **Gesture Interactions**:
   - **Double-Tap Zoom**: Mimics the native Photos app double-tap zoom behavior.
   - **Pinch-to-Zoom**: Supports two-finger pinch zoom (1.0x – 3.0x).
-  - **Drag-to-Dismiss**: Interactive pan-down gesture to dismiss, with image scaling and background fade effects.
+  - **Drag-to-Dismiss**: Interactive pan-down gesture to dismiss, with image scaling and background fade effects. To avoid conflicts with scrolling zoomed content, it only begins when the image is back at the minimum zoom scale.
 - **Transition Animations**:
   - **Fade**: Classic fade-in/fade-out effect.
   - **Zoom**: WeChat/Photos-style zoom transition, seamlessly connecting the list thumbnail to the full-size image.
@@ -358,6 +358,7 @@ class StandaloneCell: UICollectionViewCell, JXPhotoBrowserCellProtocol {
     // Optional: called when the drag-to-dismiss interaction state changes
     // isInteracting is true when the user is dragging down (image scales down following the finger),
     // false when the interaction ends (snaps back to original state)
+    // Drag-to-dismiss is only triggered when the image is at the minimum zoom scale.
     // Useful for pausing video, hiding supplementary UI during dismiss gesture, etc.
     func photoBrowserDismissInteractionDidChange(isInteracting: Bool) {
         // e.g., pause video playback during drag

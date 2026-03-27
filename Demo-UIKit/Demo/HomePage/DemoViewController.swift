@@ -245,7 +245,6 @@ extension DemoViewController: JXPhotoBrowserDelegate {
         switch media.source {
         case let .remoteImage(imageURL, thumbnailURL):
             guard let photoCell = cell as? JXZoomImageCell else { return }
-            print("[willDisplay] index: \(index), imageURL: \(imageURL)")
             // 同步取出缓存的缩略图作为占位图，然后加载原图
             let placeholder = thumbnailURL.flatMap { ImageCache.default.retrieveImageInMemoryCache(forKey: $0.absoluteString) }
             photoCell.imageView.kf.setImage(with: imageURL, placeholder: placeholder) { [weak photoCell] _ in
@@ -253,7 +252,6 @@ extension DemoViewController: JXPhotoBrowserDelegate {
             }
         case let .remoteVideo(videoURL, thumbnailURL):
             guard let videoCell = cell as? VideoPlayerCell else { return }
-            print("[willDisplay] index: \(index), videoURL: \(videoURL)")
             // 先尝试从内存缓存同步获取封面图
             let memoryImage = ImageCache.default.retrieveImageInMemoryCache(forKey: thumbnailURL.absoluteString)
             videoCell.configure(videoURL: videoURL, coverImage: memoryImage)

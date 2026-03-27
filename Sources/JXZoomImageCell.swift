@@ -5,6 +5,16 @@
 
 import UIKit
 
+private final class JXObservedImageView: UIImageView {
+    var onImageChange: (() -> Void)?
+
+    override var image: UIImage? {
+        didSet {
+            onImageChange?()
+        }
+    }
+}
+
 /// 支持图片捏合缩放查看的 Cell
 /// 内部使用 UIScrollView 实现缩放，支持单击关闭、双击切换缩放模式等手势交互
 open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoBrowserCellProtocol {
@@ -28,9 +38,16 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         return sv
     }()
 
+    /// 承载实际缩放内容的容器视图，由 UIScrollView 负责缩放几何
+    private let zoomContentView: UIView = {
+        let view = UIView()
+        view.clipsToBounds = true
+        return view
+    }()
+
     /// 展示图片内容的视图（参与缩放与转场）
     public let imageView: UIImageView = {
-        let iv = UIImageView()
+        let iv = JXObservedImageView()
         // 使用非 AutoLayout 的 frame 布局以配合缩放
         iv.translatesAutoresizingMaskIntoConstraints = true
         iv.contentMode = .scaleAspectFill
@@ -75,7 +92,11 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         ])
 
         scrollView.delegate = self
-        scrollView.addSubview(imageView)
+        scrollView.addSubview(zoomContentView)
+        zoomContentView.addSubview(imageView)
+        (imageView as? JXObservedImageView)?.onImageChange = { [weak self] in
+            self?.handleImageDidChange()
+        }
         
         // 添加双击缩放
         scrollView.addGestureRecognizer(doubleTapGesture)
@@ -95,6 +116,8 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
     
     /// 缩放模式：true 表示短边铺满（scaleAspectFill），false 表示长边铺满（scaleAspectFit）
     private var isShortEdgeFit: Bool = false
+
+    private var isPerformingLayoutUpdate = false
     
     // MARK: - Lifecycle
     
@@ -108,6 +131,8 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
         scrollView.contentOffset = .zero
         scrollView.contentInset = .zero
+        scrollView.contentSize = .zero
+        zoomContentView.frame = .zero
         
         // 重置缩放模式为初始状态（长边铺满）
         isShortEdgeFit = false
@@ -132,15 +157,15 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
             lastBoundsSize = bounds.size
             // 旋转后重置缩放和缩放模式，避免旧尺寸导致的缩放计算错误
             scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
+            scrollView.contentOffset = .zero
             isShortEdgeFit = false
             adjustImageViewFrame()
-        } else if scrollView.zoomScale == scrollView.minimumZoomScale || imageView.frame.isEmpty {
-            // 在未缩放状态下，根据图片比例调整 imageView.frame
-            // 或者如果 imageView 大小为 0 (异常状态)，也强制调整
+        } else if scrollView.zoomScale == scrollView.minimumZoomScale || zoomContentView.bounds.isEmpty {
+            // 在未缩放状态下，根据图片比例调整基础内容尺寸
+            // 或者如果基础内容大小为 0 (异常状态)，也强制调整
             adjustImageViewFrame()
         }
-        // 任何时候（包括缩放时），都通过 inset 进行居中处理
-        centerImageIfNeeded()
+        centerZoomContentViewIfNeeded()
     }
 
     // MARK: - Layout Helper
@@ -158,7 +183,7 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         return (scrollSize.width > 0 && scrollSize.height > 0) ? scrollSize : cellSize
     }
 
-    /// 根据图片实际尺寸，调整 imageView 的 frame（原点保持 (0,0)）
+    /// 根据图片实际尺寸，更新基础内容尺寸。
     /// 根据 isShortEdgeFit 状态选择缩放方式：
     /// - false: scaleAspectFit（长边铺满容器，短边等比例缩放，居中展示）
     /// - true: scaleAspectFill（短边铺满容器，长边等比例缩放）
@@ -167,72 +192,64 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         guard containerSize.width > 0, containerSize.height > 0 else { return }
         
         guard let image = imageView.image, image.size.width > 0, image.size.height > 0 else {
-            // 图片未加载时，不再先铺满容器，避免先拉伸后收缩的闪动
+            // 图片未加载时不再先铺满容器，避免先拉伸后收缩的闪动
+            zoomContentView.frame = .zero
             imageView.frame = .zero
-            scrollView.contentSize = containerSize
+            scrollView.contentSize = .zero
             return
         }
-        
-        let widthScale = containerSize.width / image.size.width
-        let heightScale = containerSize.height / image.size.height
-        
-        let scale: CGFloat
-        if isShortEdgeFit {
-            // scaleAspectFill 逻辑：选择较大的缩放比例，确保短边铺满容器，长边等比例缩放
-            scale = max(widthScale, heightScale)
-        } else {
-            // scaleAspectFit 逻辑：选择较小的缩放比例，确保长边铺满容器，短边等比例缩放
-            scale = min(widthScale, heightScale)
-        }
-        
-        // 计算缩放后的尺寸
-        let scaledWidth = image.size.width * scale
-        let scaledHeight = image.size.height * scale
-        
-        imageView.frame = CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight)
-        scrollView.contentSize = imageView.frame.size
+
+        let contentSize = baseContentSize(for: containerSize, imageSize: image.size)
+        zoomContentView.frame = CGRect(origin: .zero, size: contentSize)
+        imageView.frame = zoomContentView.bounds
+        scrollView.contentSize = contentSize
+        centerZoomContentViewIfNeeded()
     }
 
     // MARK: - UIScrollViewDelegate
     open func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        return imageView
+        return zoomContentView
     }
 
     open func scrollViewDidZoom(_ scrollView: UIScrollView) {
-        centerImageIfNeeded()
+        centerZoomContentViewIfNeeded()
+    }
+
+    open func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        let isAtMinimumZoom = scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01
+        if isAtMinimumZoom {
+            adjustImageViewFrame()
+        } else {
+            centerZoomContentViewIfNeeded()
+        }
     }
 
     // MARK: - Helpers
-    /// 在内容小于容器时居中展示（通过 contentInset 处理，避免 frame 偏移残留）
+    /// 在内容小于容器时居中展示，缩放中由 UIScrollView 负责几何，静态居中由容器视图承担。
     open func centerImageIfNeeded() {
-        // 优先使用 Cell 的 bounds，因为 scrollView.bounds 在旋转时可能更新滞后
-        var containerSize = bounds.size
-        if containerSize.width <= 0 || containerSize.height <= 0 {
-            // 如果 Cell bounds 无效，再尝试使用 scrollView.bounds
-            containerSize = scrollView.bounds.size
+        centerZoomContentViewIfNeeded()
+    }
+
+    private func centerZoomContentViewIfNeeded() {
+        let scrollBounds = CGRect(origin: .zero, size: effectiveContentSize)
+        let contentFrame = zoomContentView.frame
+        guard scrollBounds.width > 0, scrollBounds.height > 0 else { return }
+        guard contentFrame.width > 0, contentFrame.height > 0 else { return }
+
+        let targetOrigin = CGPoint(
+            x: contentFrame.width < scrollBounds.width ? (scrollBounds.width - contentFrame.width) * 0.5 : 0,
+            y: contentFrame.height < scrollBounds.height ? (scrollBounds.height - contentFrame.height) * 0.5 : 0
+        )
+        if zoomContentView.frame.origin != targetOrigin {
+            zoomContentView.frame.origin = targetOrigin
         }
-        
-        let imageSize = imageView.frame.size
-        if containerSize.width <= 0 || containerSize.height <= 0 { return }
-        if imageSize.width <= 0 || imageSize.height <= 0 { return }
-        
-        // 使用 contentInset 而非调整 frame，避免分页复用时的偏移遗留
-        let horizontalInset = max(0, (containerSize.width - imageSize.width) * 0.5)
-        let verticalInset = max(0, (containerSize.height - imageSize.height) * 0.5)
-        
-        let newInset = UIEdgeInsets(top: verticalInset, left: horizontalInset, bottom: verticalInset, right: horizontalInset)
-        let insetChanged = scrollView.contentInset != newInset
-        if insetChanged {
-            scrollView.contentInset = newInset
-        }
-        
-        if scrollView.zoomScale == scrollView.minimumZoomScale {
-            // 让内容视觉上居中，需要把 offset 调整到 inset 的负值
-            let targetOffset = CGPoint(x: -horizontalInset, y: -verticalInset)
-            if scrollView.contentOffset != targetOffset {
-                scrollView.contentOffset = targetOffset
-            }
-        }
+    }
+
+    private func baseContentSize(for containerSize: CGSize, imageSize: CGSize) -> CGSize {
+        let widthScale = containerSize.width / imageSize.width
+        let heightScale = containerSize.height / imageSize.height
+        let scale = isShortEdgeFit ? max(widthScale, heightScale) : min(widthScale, heightScale)
+        return CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
     }
 
     @objc open func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
@@ -241,36 +258,37 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         
         // 获取点击位置用于计算放大时的目标偏移
         let tapInScrollView = gesture.location(in: scrollView)
-        let tapInImageView = gesture.location(in: imageView)
+        let tapInZoomContentView = gesture.location(in: zoomContentView)
+        let containerSize = effectiveContentSize
         
         if isInitialScale {
             // 在初始缩放状态下，切换缩放模式（长边铺满 <-> 短边铺满）
-            // 在 adjustImageViewFrame 之前保存当前偏移量，因为 adjustImageViewFrame 会临时改变
-            // contentSize，UIKit 可能在此过程中钳制 contentOffset
-            let originalOffset = scrollView.contentOffset
+            let oldContentSize = zoomContentView.bounds.size
             isShortEdgeFit.toggle()
-            // 先计算新的 frame
-            let oldFrame = imageView.frame
-            adjustImageViewFrame()
-            let newFrame = imageView.frame
-            let newContentSize = imageView.frame.size
+            guard
+                let image = imageView.image,
+                image.size.width > 0,
+                image.size.height > 0,
+                containerSize.width > 0,
+                containerSize.height > 0
+            else {
+                adjustImageViewFrame()
+                return
+            }
+
+            let newContentSize = baseContentSize(for: containerSize, imageSize: image.size)
             
             // 计算基于点击位置的目标 contentOffset（仅在放大到 aspectFill 时需要）
             var tapBasedOffset: CGPoint?
-            if isShortEdgeFit, oldFrame.width > 0, oldFrame.height > 0 {
-                // 点击位置在旧图片中的相对比例
-                let scaleRatioX = newFrame.width / oldFrame.width
-                let scaleRatioY = newFrame.height / oldFrame.height
-                // 相同比例位置在新图片中的坐标
+            if isShortEdgeFit, oldContentSize.width > 0, oldContentSize.height > 0 {
+                let scaleRatioX = newContentSize.width / oldContentSize.width
+                let scaleRatioY = newContentSize.height / oldContentSize.height
                 let newTapInContent = CGPoint(
-                    x: tapInImageView.x * scaleRatioX,
-                    y: tapInImageView.y * scaleRatioY
+                    x: tapInZoomContentView.x * scaleRatioX,
+                    y: tapInZoomContentView.y * scaleRatioY
                 )
-                let containerSize = bounds.size
-                // 目标 offset：使新内容坐标点对齐到屏幕上的点击位置
                 let rawOffsetX = newTapInContent.x - tapInScrollView.x
                 let rawOffsetY = newTapInContent.y - tapInScrollView.y
-                // 限制在有效范围内
                 let maxOffsetX = max(0, newContentSize.width - containerSize.width)
                 let maxOffsetY = max(0, newContentSize.height - containerSize.height)
                 tapBasedOffset = CGPoint(
@@ -278,24 +296,12 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
                     y: min(max(0, rawOffsetY), maxOffsetY)
                 )
             }
-            
-            // 恢复旧 frame 用于动画起点
-            imageView.frame = oldFrame
-            scrollView.contentSize = oldFrame.size
-            centerImageIfNeeded()
-            // 缩小时恢复原始 contentOffset 作为动画起点，
-            // 避免 centerImageIfNeeded 或 adjustImageViewFrame 钳制导致的偏移闪跳
-            if !isShortEdgeFit {
-                scrollView.contentOffset = originalOffset
-            }
-            
-            // 使用动画平滑切换
+
             UIView.animate(withDuration: 0.3, animations: {
-                self.imageView.frame = newFrame
+                self.zoomContentView.frame.size = newContentSize
+                self.imageView.frame = self.zoomContentView.bounds
                 self.scrollView.contentSize = newContentSize
-                self.centerImageIfNeeded()
-                
-                // 在 centerImageIfNeeded 之后，覆盖 contentOffset 以定位到点击位置
+                self.centerZoomContentViewIfNeeded()
                 if let offset = tapBasedOffset {
                     self.scrollView.contentOffset = offset
                 }
@@ -303,22 +309,48 @@ open class JXZoomImageCell: UICollectionViewCell, UIScrollViewDelegate, JXPhotoB
         } else {
             // 在非初始缩放状态下，切换回初始状态（长边铺满模式）
             isShortEdgeFit = false
-            scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
-            // 动画完成后调整 frame
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self] in
                 guard let self = self else { return }
                 self.adjustImageViewFrame()
-                self.centerImageIfNeeded()
             }
+            scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+            CATransaction.commit()
         }
     }
 
     @objc open func handleSingleTap(_ gesture: UITapGestureRecognizer) {
         browser?.dismissSelf()
     }
-    
-    // MARK: - Dismiss Interaction
-    
-    /// 下拉关闭交互状态变化时调用，子类可重写以响应下拉交互状态变化
-    open func photoBrowserDismissInteractionDidChange(isInteracting: Bool) {}
+
+    open func photoBrowserDismissInteractionDidChange(isInteracting: Bool) {
+        clipsToBounds = !isInteracting
+        contentView.clipsToBounds = !isInteracting
+        scrollView.clipsToBounds = !isInteracting
+        zoomContentView.clipsToBounds = !isInteracting
+    }
+
+    private func handleImageDidChange() {
+        guard !isPerformingLayoutUpdate else { return }
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleImageDidChange()
+            }
+            return
+        }
+
+        guard bounds.width > 0, bounds.height > 0 else {
+            setNeedsLayout()
+            return
+        }
+
+        isPerformingLayoutUpdate = true
+        defer { isPerformingLayoutUpdate = false }
+
+        if scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01 || zoomContentView.bounds.isEmpty {
+            adjustImageViewFrame()
+        } else {
+            centerZoomContentViewIfNeeded()
+        }
+    }
 }

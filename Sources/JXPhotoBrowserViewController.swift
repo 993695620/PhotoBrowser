@@ -254,6 +254,7 @@ open class JXPhotoBrowserViewController: UIViewController {
             guard let cell = visibleCell() else { return }
             interactiveDismissCell = cell
             collectionView.isScrollEnabled = false
+            setDismissInteractionClippingDisabled(true, for: cell)
             // 如果是 JXZoomImageCell，禁用其内部 scrollView 滚动以避免手势冲突
             if let photoCell = cell as? JXZoomImageCell {
                 photoCell.scrollView.isScrollEnabled = false
@@ -270,9 +271,6 @@ open class JXPhotoBrowserViewController: UIViewController {
             if transitionType == .zoom {
                 delegate?.photoBrowser(self, setThumbnailHidden: true, at: pageIndex)
             }
-            
-            // 通知 Cell 进入下拉交互状态
-            cell.photoBrowserDismissInteractionDidChange(isInteracting: true)
             
         case .changed:
             guard let cell = interactiveDismissCell, let imageView = cell.transitionImageView else { return }
@@ -321,21 +319,19 @@ open class JXPhotoBrowserViewController: UIViewController {
                     self.view.backgroundColor = .black
                 }) { _ in
                     self.collectionView.isScrollEnabled = true
+                    self.setDismissInteractionClippingDisabled(false, for: cell)
                     if let photoCell = cell as? JXZoomImageCell {
                         photoCell.scrollView.isScrollEnabled = true
                     }
-                    // 通知 Cell 下拉交互结束（回弹恢复）
-                    cell.photoBrowserDismissInteractionDidChange(isInteracting: false)
                     self.interactiveDismissCell = nil
                 }
             }
         default:
             collectionView.isScrollEnabled = true
+            setDismissInteractionClippingDisabled(false, for: interactiveDismissCell)
             if let photoCell = interactiveDismissCell as? JXZoomImageCell {
                 photoCell.scrollView.isScrollEnabled = true
             }
-            // 通知 Cell 下拉交互结束（异常取消）
-            interactiveDismissCell?.photoBrowserDismissInteractionDidChange(isInteracting: false)
             interactiveDismissCell = nil
         }
     }
@@ -745,9 +741,12 @@ extension JXPhotoBrowserViewController: UIGestureRecognizerDelegate {
             
             // 如果是 JXZoomImageCell，检查缩放和滚动状态
             if let photoCell = visibleZoomImageCell() {
-                let isZoomed = photoCell.scrollView.zoomScale > 1.0 + 0.01
-                let isAtTop = photoCell.scrollView.contentOffset.y <= 1.0
-                return !isZoomed && isAtTop
+                let scrollView = photoCell.scrollView
+                let isZoomed = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
+                let topOffset = -scrollView.adjustedContentInset.top
+                let isAtTop = scrollView.contentOffset.y <= topOffset + 1.0
+                let hasVerticalScrollableContent = scrollView.contentSize.height > scrollView.bounds.height + 1.0
+                return !isZoomed && (isAtTop || !hasVerticalScrollableContent)
             }
             
             // 自定义 Cell（非 JXZoomImageCell）：直接允许下拉关闭
@@ -760,6 +759,14 @@ extension JXPhotoBrowserViewController: UIGestureRecognizerDelegate {
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         // 允许与 ScrollView 滚动共存
         return true
+    }
+}
+
+private extension JXPhotoBrowserViewController {
+    func setDismissInteractionClippingDisabled(_ disabled: Bool, for cell: JXPhotoBrowserAnyCell?) {
+        view.clipsToBounds = !disabled
+        collectionView.clipsToBounds = !disabled
+        cell?.photoBrowserDismissInteractionDidChange(isInteracting: disabled)
     }
 }
 
